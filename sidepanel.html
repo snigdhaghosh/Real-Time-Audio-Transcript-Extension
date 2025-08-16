@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Audio Transcript</title>
+    <link rel="stylesheet" href="sidepanel.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <i class="fas fa-microphone"></i>
+                <h1>Audio Transcript</h1>
+            </div>
+            <div class="status-indicator" id="statusIndicator">
+                <span class="status-dot"></span>
+                <span class="status-text">Ready</span>
+            </div>
+        </header>
+
+        <!-- Timer Display -->
+        <div class="timer-container" id="timerContainer" style="display: none;">
+            <div class="timer">
+                <i class="fas fa-clock"></i>
+                <span id="timer">00:00:00</span>
+            </div>
+        </div>
+
+        <!-- Recording Controls -->
+        <div class="controls">
+            <button class="btn btn-primary" id="recordBtn">
+                <i class="fas fa-play"></i>
+                <span>Start Recording</span>
+            </button>
+            <button class="btn btn-secondary" id="clearBtn" disabled>
+                <i class="fas fa-trash"></i>
+                <span>Clear</span>
+            </button>
+            <button class="btn btn-secondary" id="testApisBtn">
+                <i class="fas fa-bug"></i>
+                <span>Test APIs</span>
+            </button>
+            <button class="btn btn-secondary" id="requestPermissionsBtn">
+                <i class="fas fa-key"></i>
+                <span>Request Permissions</span>
+            </button>
+        </div>
+
+        <!-- API Configuration -->
+        <div class="config-section">
+            <div class="config-header">
+                <h3>API Configuration</h3>
+                <button class="btn-icon" id="configToggle">
+                    <i class="fas fa-cog"></i>
+                </button>
+            </div>
+            <div class="config-content" id="configContent" style="display: none;">
+                <div class="form-group">
+                    <label for="apiProvider">Provider:</label>
+                    <select id="apiProvider" class="form-control">
+                        <option value="google">Google Speech-to-Text</option>
+                        <option value="openai">OpenAI Whisper</option>
+                        <option value="deepgram">Deepgram</option>
+                        <option value="fireworks">Fireworks</option>
+                        <option value="auto">Auto (Fallback)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="apiKey">API Key:</label>
+                    <input type="password" id="apiKey" class="form-control" placeholder="Enter your API key">
+                </div>
+                <button class="btn btn-small" id="saveConfig">
+                    <i class="fas fa-save"></i>
+                    Save Configuration
+                </button>
+            </div>
+        </div>
+
+        <!-- Transcription Display -->
+        <div class="transcript-section">
+            <div class="transcript-header">
+                <h3>Live Transcript</h3>
+                <div class="transcript-controls">
+                    <button class="btn-icon" id="autoScrollToggle" title="Toggle auto-scroll">
+                        <i class="fas fa-arrow-down"></i>
+                    </button>
+                    <button class="btn-icon" id="exportBtn" title="Export transcript" disabled>
+                        <i class="fas fa-download"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="transcript-container">
+                <div class="transcript-content" id="transcriptContent">
+                    <div class="empty-state">
+                        <i class="fas fa-microphone-slash"></i>
+                        <p>No transcript yet. Start recording to begin transcription.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Export Modal -->
+        <div class="modal" id="exportModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Export Transcript</h3>
+                    <button class="btn-icon" id="closeModal">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="export-options">
+                        <button class="btn btn-export" data-format="text">
+                            <i class="fas fa-file-alt"></i>
+                            <span>Text File (.txt)</span>
+                        </button>
+                        <button class="btn btn-export" data-format="json">
+                            <i class="fas fa-code"></i>
+                            <span>JSON File (.json)</span>
+                        </button>
+                        <button class="btn btn-export" data-format="srt">
+                            <i class="fas fa-closed-captioning"></i>
+                            <span>Subtitle File (.srt)</span>
+                        </button>
+                    </div>
+                    <div class="copy-section">
+                        <button class="btn btn-copy" id="copyBtn">
+                            <i class="fas fa-copy"></i>
+                            Copy to Clipboard
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error Toast -->
+        <div class="toast" id="errorToast">
+            <div class="toast-content">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span id="errorMessage"></span>
+            </div>
+            <button class="btn-icon" id="closeToast">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+
+        <!-- Success Toast -->
+        <div class="toast success" id="successToast">
+            <div class="toast-content">
+                <i class="fas fa-check-circle"></i>
+                <span id="successMessage"></span>
+            </div>
+            <button class="btn-icon" id="closeSuccessToast">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    </div>
+
+    <script src="sidepanel.js"></script>
+</body>
+</html>

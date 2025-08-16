@@ -1,0 +1,36 @@
+{
+  "name": "real-time-audio-transcript-extension",
+  "version": "1.0.0",
+  "description": "A Chrome extension that captures audio from browser tabs and provides real-time transcription with a user-friendly sidepanel interface",
+  "main": "background.js",
+  "scripts": {
+    "build": "node generate_icons.js",
+    "package": "zip -r extension.zip . -x \"*.git*\" \"node_modules/*\" \"*.DS_Store\" \"package.json\" \"package-lock.json\" \"generate_icons.js\"",
+    "dev": "echo 'Load extension in Chrome: chrome://extensions/ -> Developer mode -> Load unpacked'"
+  },
+  "keywords": [
+    "chrome-extension",
+    "audio-transcription",
+    "real-time",
+    "speech-to-text",
+    "whisper",
+    "deepgram",
+    "google-speech",
+    "fireworks"
+  ],
+  "author": "Your Name <your-email@example.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/Real-Time-Audio-Transcript-Extension.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/Real-Time-Audio-Transcript-Extension/issues"
+  },
+  "homepage": "https://github.com/yourusername/Real-Time-Audio-Transcript-Extension#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "devDependencies": {},
+  "dependencies": {}
+}
