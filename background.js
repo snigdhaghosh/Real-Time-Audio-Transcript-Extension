@@ -96,7 +96,9 @@ class AudioTranscriptionManager {
           sendResponse({ success: true });
           break;
         case 'transcribeChunk':
+          console.log('Received audio chunk for transcription');
           const transcription = await this.transcribeAudio(message.audioBase64);
+          console.log('Transcription result:', transcription);
           sendResponse({ success: true, transcription });
           break;
         case 'getStatus':
@@ -174,38 +176,6 @@ class AudioTranscriptionManager {
     if (this.isRecording) return;
 
     try {
-      // Check if tabCapture API is available
-      console.log('startRecording - tabCapture check:', {
-        tabCaptureExists: !!chrome.tabCapture,
-        captureType: typeof chrome.tabCapture?.capture,
-        captureIsFunction: typeof chrome.tabCapture?.capture === 'function'
-      });
-      
-      // Try to access the capture method directly
-      const captureMethod = chrome.tabCapture?.capture;
-      console.log('Capture method details:', {
-        exists: !!captureMethod,
-        type: typeof captureMethod,
-        isFunction: typeof captureMethod === 'function',
-        isAsync: captureMethod && captureMethod.constructor.name === 'AsyncFunction'
-      });
-      
-      // Check if we have alternative capture methods
-      console.log('Alternative capture methods:', {
-        desktopCapture: !!chrome.desktopCapture,
-        getDisplayMedia: typeof navigator.mediaDevices?.getDisplayMedia
-      });
-      
-      if (!chrome.tabCapture || typeof captureMethod !== 'function') {
-        console.error('Tab capture API check failed:', {
-          tabCapture: !!chrome.tabCapture,
-          captureType: typeof chrome.tabCapture?.capture,
-          availableMethods: chrome.tabCapture ? Object.keys(chrome.tabCapture) : 'none',
-          captureMethodType: typeof captureMethod
-        });
-        throw new Error('Tab capture API is not available. Please ensure the extension has proper permissions and is reloaded.');
-      }
-
       // Get current active tab
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab) {
@@ -214,79 +184,10 @@ class AudioTranscriptionManager {
       
       this.currentTabId = tab.id;
       this.sessionStartTime = Date.now();
-
-      // Request tab capture with proper error handling
-      let stream;
-      try {
-        console.log('Attempting tab capture...');
-        
-        // Try different approaches for tab capture
-        if (typeof captureMethod === 'function') {
-          stream = await captureMethod({
-            audio: true,
-            video: false
-          });
-        } else if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-          // Fallback: try getDisplayMedia
-          console.log('Trying getDisplayMedia as fallback...');
-          stream = await navigator.mediaDevices.getDisplayMedia({
-            audio: true,
-            video: false
-          });
-        } else {
-          // Last resort: try direct call
-          stream = await chrome.tabCapture.capture({
-            audio: true,
-            video: false
-          });
-        }
-        
-        console.log('Tab capture result:', !!stream);
-      } catch (captureError) {
-        console.error('Tab capture error:', captureError);
-        console.error('Error details:', {
-          name: captureError.name,
-          message: captureError.message,
-          stack: captureError.stack
-        });
-        
-        // Check if it's a user gesture error
-        if (captureError.message.includes('user gesture') || captureError.message.includes('not allowed')) {
-          throw new Error('Tab capture requires a user gesture. Please click the record button again.');
-        }
-        
-        throw new Error(`Tab capture failed: ${captureError.message}. Please ensure the tab is playing audio and you have granted necessary permissions.`);
-      }
-
-      if (!stream) {
-        throw new Error('Failed to capture tab audio. Please ensure the tab is playing audio and try refreshing the page.');
-      }
-
-      // Set up MediaRecorder
-      this.mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
-
-      this.audioChunks = [];
       this.isRecording = true;
-
-      // Handle audio data
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          this.audioChunks.push(event.data);
-          this.processAudioChunk(event.data);
-        }
-      };
-
-      this.mediaRecorder.onstop = () => {
-        this.finalizeRecording();
-      };
-
-      // Start recording with 1-second chunks for real-time processing
-      this.mediaRecorder.start(1000);
       
       this.updateSidepanel();
-      console.log('Recording started');
+      console.log('Recording started - sidepanel will handle capture');
     } catch (error) {
       console.error('Failed to start recording:', error);
       throw error;
@@ -297,70 +198,42 @@ class AudioTranscriptionManager {
     if (!this.isRecording) return;
 
     try {
-      if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-        this.mediaRecorder.stop();
-      }
-      
       this.isRecording = false;
       this.sessionStartTime = null;
       
-      // Stop all tracks
-      if (this.mediaRecorder && this.mediaRecorder.stream) {
-        this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
-      }
-      
       this.updateSidepanel();
-      console.log('Recording stopped');
+      console.log('Recording stopped - sidepanel will handle cleanup');
     } catch (error) {
       console.error('Failed to stop recording:', error);
       throw error;
     }
   }
 
+  // Audio processing is now handled by the sidepanel
+  // This method is kept for compatibility but not used
   async processAudioChunk(audioBlob) {
-    try {
-      // Convert blob to base64
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-
-      // Send to transcription API
-      const transcription = await this.transcribeAudio(base64Audio);
-      
-      if (transcription) {
-        const timestamp = new Date().toISOString();
-        const entry = {
-          id: Date.now(),
-          timestamp,
-          text: transcription,
-          duration: this.getSessionDuration()
-        };
-
-        this.transcriptionBuffer.push(entry);
-        
-        // Save to storage
-        await chrome.storage.local.set({ 
-          transcriptionBuffer: this.transcriptionBuffer 
-        });
-
-        // Update sidepanel
-        this.updateSidepanel();
-      }
-    } catch (error) {
-      console.error('Audio processing error:', error);
-      // Store in offline buffer for later processing
-      this.offlineBuffer.push(audioBlob);
-    }
+    console.log('Audio processing moved to sidepanel');
   }
 
   async transcribeAudio(audioBase64) {
+    console.log('Starting transcription with provider:', this.apiConfig.provider);
+    console.log('API key configured:', !!this.apiConfig.apiKey);
+    
+    if (!this.apiConfig.apiKey) {
+      console.error('No API key configured');
+      return null;
+    }
+    
     const providers = ['google', 'openai', 'deepgram', 'fireworks'];
     
     for (const provider of providers) {
       try {
         if (provider === this.apiConfig.provider || this.apiConfig.provider === 'auto') {
+          console.log(`Trying ${provider} API...`);
           const result = await this.callTranscriptionAPI(provider, audioBase64);
           if (result) {
             this.retryCount = 0; // Reset retry count on success
+            console.log(`Transcription successful with ${provider}:`, result);
             return result;
           }
         }
@@ -376,6 +249,7 @@ class AudioTranscriptionManager {
       throw new Error('All transcription services are currently unavailable');
     }
     
+    console.log('No transcription result from any provider');
     return null;
   }
 
@@ -567,6 +441,23 @@ class AudioTranscriptionManager {
       }
     } catch (error) {
       console.error('Failed to setup sidepanel:', error);
+    }
+  }
+
+  // Offscreen document is no longer needed - sidepanel handles tabCapture directly
+
+  notifySidepanelOfNewTranscript(entry) {
+    try {
+      // Send message to sidepanel to update transcript
+      chrome.runtime.sendMessage({
+        action: 'newTranscriptEntry',
+        entry: entry
+      }).catch(error => {
+        // Sidepanel might not be open, which is normal
+        console.log('Sidepanel not available for transcript update:', error.message);
+      });
+    } catch (error) {
+      console.log('Failed to notify sidepanel:', error.message);
     }
   }
 }

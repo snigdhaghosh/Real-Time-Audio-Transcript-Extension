@@ -74,13 +74,20 @@ class SidepanelManager {
         this.updateRecordingUI(false);
         this.showToast('Recording stopped', 'success');
       } else {
+        // Check if API key is configured before starting
+        const configResponse = await this.sendMessage({ action: 'getApiConfig' });
+        if (!configResponse.config || !configResponse.config.apiKey) {
+          this.showToast('Please configure an API key in settings (⚙️) before recording.', 'error');
+          return;
+        }
+        
         // Start recording - try local capture first, fallback to background
         const success = await this.startLocalRecording();
         if (success) {
           this.startTimer();
           this.isRecording = true;
           this.updateRecordingUI(true);
-          this.showToast('Recording started (local capture)', 'success');
+          this.showToast('Recording started! Make sure the tab is playing audio.', 'success');
         } else {
           // Fallback to background recording
           await this.sendMessage({ action: 'startRecording' });
@@ -238,15 +245,29 @@ class SidepanelManager {
     }
   }
 
+  // Handle new transcript entries from background script
+  handleNewTranscriptEntry(entry) {
+    this.currentTranscript.push(entry);
+    this.updateTranscriptDisplay();
+  }
+
   updateTranscriptDisplay() {
     const transcriptContent = document.getElementById('transcriptContent');
     const exportBtn = document.getElementById('exportBtn');
 
     if (this.currentTranscript.length === 0) {
+      const isRecording = this.isRecording;
       transcriptContent.innerHTML = `
         <div class="empty-state">
-          <i class="fas fa-microphone-slash"></i>
-          <p>No transcript yet. Start recording to begin transcription.</p>
+          <i class="fas fa-microphone${isRecording ? '' : '-slash'}"></i>
+          <p>${isRecording ? 
+            'Recording in progress... Make sure the tab is playing audio and you have configured an API key.' : 
+            'No transcript yet. Start recording on a webpage with audio to begin transcription.'
+          }</p>
+          ${isRecording ? 
+            '<p style="font-size: 0.9em; color: #666; margin-top: 10px;">Note: Cannot record from Chrome system pages (chrome://, extensions page, etc.)</p>' : 
+            ''
+          }
         </div>
       `;
       exportBtn.disabled = true;
@@ -448,44 +469,67 @@ class SidepanelManager {
 
   async startLocalRecording() {
     try {
-      console.log('Attempting local tab capture...');
+      console.log('Starting tab capture in sidepanel...');
       
-      // Try to capture tab audio using chrome.tabCapture
-      if (chrome.tabCapture && chrome.tabCapture.capture) {
-        this.localStream = await chrome.tabCapture.capture({
-          audio: true,
-          video: false
-        });
-      } else if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-        // Fallback to getDisplayMedia
-        console.log('Using getDisplayMedia as fallback...');
-        this.localStream = await navigator.mediaDevices.getDisplayMedia({
-          audio: true,
-          video: false
-        });
-      } else {
-        console.log('No local capture methods available');
-        return false;
+      // Check current tab first
+      const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!currentTab) {
+        throw new Error('No active tab found');
       }
 
-      if (!this.localStream) {
-        console.log('Failed to get local stream');
-        return false;
+      // Check if the current tab is a Chrome system page
+      if (currentTab.url.startsWith('chrome://') || 
+          currentTab.url.startsWith('chrome-extension://') ||
+          currentTab.url.startsWith('edge://') ||
+          currentTab.url.startsWith('about:')) {
+        throw new Error('Cannot capture audio from Chrome system pages. Please navigate to a regular webpage with audio (like YouTube, news sites, etc.)');
       }
 
-      // Set up MediaRecorder
-      this.localMediaRecorder = new MediaRecorder(this.localStream, {
-        mimeType: 'audio/webm;codecs=opus'
+      console.log('Attempting to capture tab:', currentTab.url);
+
+      // Wrap the callback-style tabCapture API in a promise
+      const stream = await new Promise((resolve, reject) => {
+        chrome.tabCapture.capture({ audio: true, video: false }, (capturedStream) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            console.error('Tab capture error details:', err);
+            console.error('Error message:', err.message);
+            console.error('Full error object:', JSON.stringify(err, null, 2));
+            if (err.message.includes('activeTab permission') || err.message.includes('not been invoked')) {
+              reject(new Error('Extension needs permission to access this tab. Please click the extension icon and try again on a regular webpage (not Chrome system pages).'));
+            } else if (err.message.includes('Chrome pages cannot be captured')) {
+              reject(new Error('Cannot capture audio from Chrome system pages. Please navigate to a regular webpage with audio content.'));
+            } else {
+              reject(new Error(`Tab capture failed: ${err.message}`));
+            }
+          } else if (!capturedStream) {
+            reject(new Error('Failed to capture tab audio. Make sure the tab is playing audio and try refreshing the page.'));
+          } else {
+            resolve(capturedStream);
+          }
+        });
       });
 
+      console.log('Tab capture successful, setting up MediaRecorder...');
+
+      // Save stream so we can stop it later
+      this.localStream = stream;
+
+      // Set up MediaRecorder with 1s slices
+      this.localMediaRecorder = new MediaRecorder(stream, { 
+        mimeType: 'audio/webm;codecs=opus' 
+      });
+      
       this.localAudioChunks = [];
       this.localSessionStartTime = Date.now();
 
-      // Handle audio data
       this.localMediaRecorder.ondataavailable = (event) => {
+        console.log('Audio data available, size:', event.data.size);
         if (event.data.size > 0) {
           this.localAudioChunks.push(event.data);
           this.sendAudioChunk(event.data);
+        } else {
+          console.log('Audio chunk is empty, skipping');
         }
       };
 
@@ -493,9 +537,12 @@ class SidepanelManager {
         this.finalizeLocalRecording();
       };
 
-      // Start recording with 1-second chunks
       this.localMediaRecorder.start(1000);
-      console.log('Local recording started successfully');
+
+      // Inform the background service worker to update its status
+      await this.sendMessage({ action: 'startRecording' });
+
+      console.log('Recording started successfully in sidepanel');
       return true;
     } catch (error) {
       console.error('Local recording failed:', error);
@@ -508,14 +555,16 @@ class SidepanelManager {
       if (this.localMediaRecorder && this.localMediaRecorder.state !== 'inactive') {
         this.localMediaRecorder.stop();
       }
-      
       if (this.localStream) {
         this.localStream.getTracks().forEach(track => track.stop());
         this.localStream = null;
       }
-      
       this.localSessionStartTime = null;
-      console.log('Local recording stopped');
+      
+      // Inform the background service worker to update its status
+      await this.sendMessage({ action: 'stopRecording' });
+      
+      console.log('Recording stopped in sidepanel');
     } catch (error) {
       console.error('Error stopping local recording:', error);
     }
@@ -523,15 +572,26 @@ class SidepanelManager {
 
   async sendAudioChunk(audioBlob) {
     try {
+      console.log('🎵 Processing audio chunk, size:', audioBlob.size, 'bytes');
+      
+      if (audioBlob.size === 0) {
+        console.warn('⚠️ Audio chunk is empty, skipping...');
+        return;
+      }
+      
       // Convert blob to base64
       const arrayBuffer = await audioBlob.arrayBuffer();
       const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
 
-      // Send to background for transcription
+      console.log('📤 Sending audio chunk to background for transcription... Size:', base64Audio.length, 'chars');
+
+      // Send to background script for transcription
       const response = await this.sendMessage({ 
         action: 'transcribeChunk', 
         audioBase64: base64Audio 
       });
+
+      console.log('📥 Transcription response:', response);
 
       if (response.success && response.transcription) {
         const timestamp = new Date().toISOString();
@@ -544,9 +604,14 @@ class SidepanelManager {
 
         this.currentTranscript.push(entry);
         this.updateTranscriptDisplay();
+        console.log('✅ Added transcript entry:', entry);
+      } else if (response.success && !response.transcription) {
+        console.log('⚪ No transcription text returned (might be silence or API returned empty)');
+      } else {
+        console.log('❌ Transcription failed:', response.error || 'Unknown error');
       }
     } catch (error) {
-      console.error('Failed to send audio chunk:', error);
+      console.error('💥 Failed to send audio chunk:', error);
     }
   }
 
@@ -580,7 +645,14 @@ class SidepanelManager {
 
 // Initialize the sidepanel manager when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-  new SidepanelManager();
+  const manager = new SidepanelManager();
+  
+  // Listen for messages from background script
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'newTranscriptEntry') {
+      manager.handleNewTranscriptEntry(message.entry);
+    }
+  });
 });
 
 // Handle visibility change to update status when sidepanel becomes visible
