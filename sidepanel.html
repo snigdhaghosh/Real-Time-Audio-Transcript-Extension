@@ -21,6 +21,29 @@
             </div>
         </header>
 
+        <!-- Instructions -->
+        <div class="instructions" id="instructionsPanel">
+            <div class="instructions-header">
+                <i class="fas fa-info-circle"></i>
+                <span>How to Record</span>
+                <button class="instructions-toggle" id="instructionsToggle">
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+            </div>
+            <div class="instructions-content" id="instructionsContent">
+                <ol>
+                    <li><strong>Navigate</strong> to a website with audio (YouTube, news, etc.)</li>
+                    <li><strong>Click the extension icon</strong> in your toolbar (not just open sidepanel)</li>
+                    <li><strong>Configure API key</strong> in settings below</li>
+                    <li><strong>Click "Start Recording"</strong> to begin transcription</li>
+                </ol>
+                <div class="instructions-note">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Chrome system pages (chrome://) cannot be recorded</span>
+                </div>
+            </div>
+        </div>
+
         <!-- Timer Display -->
         <div class="timer-container" id="timerContainer" style="display: none;">
             <div class="timer">
@@ -61,6 +84,7 @@
                 <div class="form-group">
                     <label for="apiProvider">Provider:</label>
                     <select id="apiProvider" class="form-control">
+                        <option value="gemini">Google Gemini 2.5 Flash (Recommended - Free Credits)</option>
                         <option value="google">Google Speech-to-Text</option>
                         <option value="openai">OpenAI Whisper</option>
                         <option value="deepgram">Deepgram</option>

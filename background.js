@@ -216,47 +216,50 @@ class AudioTranscriptionManager {
   }
 
   async transcribeAudio(audioBase64) {
-    console.log('Starting transcription with provider:', this.apiConfig.provider);
-    console.log('API key configured:', !!this.apiConfig.apiKey);
+    console.log('🎯 Starting transcription with provider:', this.apiConfig.provider);
+    console.log('🔑 API key configured:', !!this.apiConfig.apiKey);
     
     if (!this.apiConfig.apiKey) {
-      console.error('No API key configured');
+      console.error('❌ No API key configured');
+      throw new Error('No API key configured. Please configure an API key in settings.');
+    }
+    
+    if (!audioBase64 || audioBase64.length < 100) {
+      console.log('⚠️ Audio data too small, skipping transcription');
       return null;
     }
     
-    const providers = ['google', 'openai', 'deepgram', 'fireworks'];
-    
-    for (const provider of providers) {
-      try {
-        if (provider === this.apiConfig.provider || this.apiConfig.provider === 'auto') {
-          console.log(`Trying ${provider} API...`);
-          const result = await this.callTranscriptionAPI(provider, audioBase64);
-          if (result) {
-            this.retryCount = 0; // Reset retry count on success
-            console.log(`Transcription successful with ${provider}:`, result);
-            return result;
-          }
-        }
-      } catch (error) {
-        console.error(`${provider} API error:`, error);
-        continue;
+    try {
+      console.log(`🔄 Trying ${this.apiConfig.provider} API...`);
+      const result = await this.callTranscriptionAPI(this.apiConfig.provider, audioBase64);
+      
+      if (result && result.trim()) {
+        this.retryCount = 0; // Reset retry count on success
+        console.log(`✅ Transcription successful with ${this.apiConfig.provider}:`, result);
+        return result.trim();
+      } else {
+        console.log('⚪ API returned empty result (likely silence)');
+        return null;
       }
+    } catch (error) {
+      console.error(`❌ ${this.apiConfig.provider} API error:`, error);
+      this.retryCount++;
+      
+      if (this.retryCount >= this.maxRetries) {
+        this.retryCount = 0; // Reset for next attempt
+        throw new Error(`Transcription failed: ${error.message}`);
+      }
+      
+      throw error;
     }
-    
-    // If all providers fail, increment retry count
-    this.retryCount++;
-    if (this.retryCount >= this.maxRetries) {
-      throw new Error('All transcription services are currently unavailable');
-    }
-    
-    console.log('No transcription result from any provider');
-    return null;
   }
 
   async callTranscriptionAPI(provider, audioBase64) {
     const config = this.apiConfig;
     
     switch (provider) {
+      case 'gemini':
+        return await this.callGeminiAPI(audioBase64, config);
       case 'google':
         return await this.callGoogleSpeechAPI(audioBase64, config);
       case 'openai':
@@ -270,8 +273,89 @@ class AudioTranscriptionManager {
     }
   }
 
+  async callGeminiAPI(audioBase64, config) {
+    if (!config.apiKey) throw new Error('Gemini API key not configured');
+    
+    console.log('🔍 Calling Gemini 2.5 Flash API with audio size:', audioBase64.length);
+    
+    // Convert base64 to blob for Gemini multimodal API
+    const audioBlob = this.base64ToBlob(audioBase64, 'audio/webm');
+    
+    // Create form data for multipart upload
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'audio.webm');
+    
+    // First, upload the audio file to Gemini
+    const uploadResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/files?key=${config.apiKey}`, {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!uploadResponse.ok) {
+      const errorText = await uploadResponse.text();
+      console.error('Gemini upload error:', errorText);
+      throw new Error(`Gemini upload error: ${uploadResponse.status} - ${errorText}`);
+    }
+    
+    const uploadData = await uploadResponse.json();
+    const fileUri = uploadData.file?.uri;
+    
+    if (!fileUri) {
+      throw new Error('Failed to upload audio to Gemini');
+    }
+    
+    console.log('📁 Audio uploaded to Gemini, file URI:', fileUri);
+    
+    // Now generate content with transcription prompt
+    const generateResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${config.apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: "Please transcribe this audio file. Return only the spoken text without any additional formatting, comments, or metadata. If there is no speech or the audio is silent, return an empty string."
+              },
+              {
+                file_data: {
+                  mime_type: "audio/webm",
+                  file_uri: fileUri
+                }
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 1000
+        }
+      })
+    });
+    
+    console.log('📡 Gemini API response status:', generateResponse.status);
+    
+    if (!generateResponse.ok) {
+      const errorText = await generateResponse.text();
+      console.error('Gemini API error:', errorText);
+      throw new Error(`Gemini API error: ${generateResponse.status} - ${errorText}`);
+    }
+    
+    const data = await generateResponse.json();
+    console.log('📄 Gemini API response:', data);
+    
+    const transcript = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+    console.log('📝 Extracted transcript:', transcript);
+    
+    return transcript;
+  }
+
   async callGoogleSpeechAPI(audioBase64, config) {
     if (!config.apiKey) throw new Error('Google API key not configured');
+    
+    console.log('🔍 Calling Google Speech API with audio size:', audioBase64.length);
     
     const response = await fetch(`https://speech.googleapis.com/v1/speech:recognize?key=${config.apiKey}`, {
       method: 'POST',
@@ -282,9 +366,12 @@ class AudioTranscriptionManager {
         config: {
           encoding: 'WEBM_OPUS',
           sampleRateHertz: 48000,
+          // audioChannelCount omitted - Google will infer the channel count
+          // from the WebM Opus header. Supplying a mismatched value triggers
+          // the INVALID_ARGUMENT error.
           languageCode: 'en-US',
           enableAutomaticPunctuation: true,
-          model: 'latest_long'
+          model: 'latest_short'
         },
         audio: {
           content: audioBase64
@@ -292,12 +379,21 @@ class AudioTranscriptionManager {
       })
     });
 
+    console.log('📡 Google API response status:', response.status);
+
     if (!response.ok) {
-      throw new Error(`Google API error: ${response.status}`);
+      const errorText = await response.text();
+      console.error('Google API error details:', errorText);
+      throw new Error(`Google API error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
-    return data.results?.[0]?.alternatives?.[0]?.transcript || '';
+    console.log('📄 Google API response:', data);
+    
+    const transcript = data.results?.[0]?.alternatives?.[0]?.transcript || '';
+    console.log('📝 Extracted transcript:', transcript);
+    
+    return transcript;
   }
 
   async callOpenAIWhisperAPI(audioBase64, config) {
