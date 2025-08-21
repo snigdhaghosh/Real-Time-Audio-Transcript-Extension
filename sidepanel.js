@@ -13,6 +13,8 @@ class SidepanelManager {
     this.localSessionStartTime = null;
     this.localAudioChunks = [];
     
+
+    
     this.init();
   }
 
@@ -30,6 +32,8 @@ class SidepanelManager {
     document.getElementById('clearBtn').addEventListener('click', () => this.clearTranscript());
     document.getElementById('testApisBtn').addEventListener('click', () => this.testApis());
     document.getElementById('requestPermissionsBtn').addEventListener('click', () => this.requestPermissions());
+    
+
     
     // Add diagnostic button (if it exists)
     const diagBtn = document.getElementById('diagnosticBtn');
@@ -157,6 +161,8 @@ class SidepanelManager {
       statusText.textContent = 'Ready';
     }
   }
+
+
 
   startTimer() {
     this.timerInterval = setInterval(() => {
@@ -314,6 +320,8 @@ class SidepanelManager {
     `;
   }
 
+
+
   escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
@@ -446,8 +454,10 @@ class SidepanelManager {
       // Only update status from background if not recording locally
       if (!this.isRecording || !this.localSessionStartTime) {
         this.updateStatus();
+        // Only reload transcript from storage when not actively recording
+        // to avoid overwriting real-time transcripts
+        this.loadTranscript();
       }
-      this.loadTranscript();
     }, 2000);
   }
 
@@ -649,6 +659,7 @@ class SidepanelManager {
       
       this.localAudioChunks = [];
       this.localSessionStartTime = Date.now();
+      this.overlapBuffer = null; // For 3-second overlap between chunks
 
       this.localMediaRecorder.ondataavailable = (event) => {
         console.log('🎵 Audio data available, size:', event.data.size);
@@ -657,8 +668,10 @@ class SidepanelManager {
         
         if (event.data.size > 0) {
           this.localAudioChunks.push(event.data);
-          console.log('📤 Sending audio chunk for transcription...');
-          this.sendAudioChunk(event.data);
+          console.log('📤 Processing 30-second audio chunk for transcription...');
+          
+          // Handle 3-second overlap as specified in requirements
+          this.processChunkWithOverlap(event.data);
         } else {
           console.log('⚠️ Audio chunk is empty, skipping');
         }
@@ -677,8 +690,9 @@ class SidepanelManager {
         console.error('❌ MediaRecorder error:', event.error);
       };
 
-      console.log('🚀 Starting MediaRecorder with 1000ms intervals...');
-      this.localMediaRecorder.start(1000);
+      console.log('🚀 Starting MediaRecorder with 30-second intervals...');
+      // Start recording with 30-second chunks as per requirements
+      this.localMediaRecorder.start(30000); // 30 seconds
       console.log('🎬 MediaRecorder state after start:', this.localMediaRecorder.state);
 
       // Inform the background service worker to update its status
@@ -701,7 +715,11 @@ class SidepanelManager {
         this.localStream.getTracks().forEach(track => track.stop());
         this.localStream = null;
       }
+      
+
+      
       this.localSessionStartTime = null;
+      this.overlapBuffer = null; // Clear overlap buffer
       
       // Inform the background service worker to update its status
       await this.sendMessage({ action: 'stopRecording' });
@@ -709,6 +727,73 @@ class SidepanelManager {
       console.log('Recording stopped in sidepanel');
     } catch (error) {
       console.error('Error stopping local recording:', error);
+    }
+  }
+
+
+
+  // Process audio chunk with 3-second overlap as per requirements
+  async processChunkWithOverlap(currentChunk) {
+    try {
+      let chunkToProcess = currentChunk;
+      
+      // If we have an overlap buffer from the previous chunk, combine it
+      if (this.overlapBuffer) {
+        console.log('🔄 Combining with 3-second overlap from previous chunk...');
+        
+        // Create a combined blob with overlap + current chunk
+        chunkToProcess = new Blob([this.overlapBuffer, currentChunk], { 
+          type: 'audio/webm;codecs=opus' 
+        });
+        
+        console.log('📏 Combined chunk size:', chunkToProcess.size, 'bytes');
+      }
+      
+      // Send the current chunk (with overlap if applicable) for transcription
+      await this.sendAudioChunk(chunkToProcess);
+      
+      // Create precise 3-second overlap buffer for next chunk
+      await this.createOverlapBuffer(currentChunk);
+      
+    } catch (error) {
+      console.error('❌ Error processing chunk with overlap:', error);
+      // Fallback to processing without overlap
+      await this.sendAudioChunk(currentChunk);
+    }
+  }
+
+  // Create a more precise 3-second overlap buffer
+  async createOverlapBuffer(audioChunk) {
+    try {
+      // For WebM Opus format, we'll use a time-based approach
+      // Since we're recording 30-second chunks, 3 seconds = 10% of the chunk
+      const OVERLAP_DURATION_RATIO = 0.1; // 3 seconds out of 30 seconds
+      
+      const arrayBuffer = await audioChunk.arrayBuffer();
+      const overlapSize = Math.floor(arrayBuffer.byteLength * OVERLAP_DURATION_RATIO);
+      
+      if (overlapSize > 1000) { // Only create buffer if substantial data
+        // Extract the last 10% of the audio data (approximately 3 seconds)
+        const overlapStart = arrayBuffer.byteLength - overlapSize;
+        const overlapData = arrayBuffer.slice(overlapStart);
+        
+        this.overlapBuffer = new Blob([overlapData], { 
+          type: 'audio/webm;codecs=opus' 
+        });
+        
+        console.log('💾 Created 3-second overlap buffer:', {
+          originalSize: arrayBuffer.byteLength,
+          overlapSize: overlapData.byteLength,
+          ratio: (overlapData.byteLength / arrayBuffer.byteLength * 100).toFixed(1) + '%'
+        });
+      } else {
+        console.log('⚠️ Audio chunk too small for overlap buffer');
+        this.overlapBuffer = null;
+      }
+      
+    } catch (error) {
+      console.error('❌ Error creating overlap buffer:', error);
+      this.overlapBuffer = null;
     }
   }
 
@@ -737,23 +822,16 @@ class SidepanelManager {
       // Send to background script for transcription
       const response = await this.sendMessage({ 
         action: 'transcribeChunk', 
-        audioBase64: base64Audio 
+        audioBase64: base64Audio
       });
 
       console.log('📥 Transcription response:', response);
 
       if (response && response.success && response.transcription && response.transcription.trim()) {
-        const timestamp = new Date().toISOString();
-        const entry = {
-          id: Date.now(),
-          timestamp,
-          text: response.transcription.trim(),
-          duration: this.getLocalSessionDuration()
-        };
-
-        this.currentTranscript.push(entry);
-        this.updateTranscriptDisplay();
-        console.log('✅ Added transcript entry:', entry);
+        console.log('✅ Transcription already processed by background script');
+        // Transcript is automatically added by background script and synced
+        // We'll refresh from storage to get the latest entries
+        await this.loadTranscript();
       } else if (response && response.success && !response.transcription) {
         console.log('⚪ No transcription text returned (might be silence or API returned empty)');
       } else {

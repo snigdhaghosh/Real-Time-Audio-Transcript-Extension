@@ -22,7 +22,7 @@
         </header>
 
         <!-- Instructions -->
-        <div class="instructions" id="instructionsPanel">
+        <!-- <div class="instructions" id="instructionsPanel">
             <div class="instructions-header">
                 <i class="fas fa-info-circle"></i>
                 <span>How to Record</span>
@@ -34,15 +34,15 @@
                 <ol>
                     <li><strong>Navigate</strong> to a website with audio (YouTube, news, etc.)</li>
                     <li><strong>Click the extension icon</strong> in your toolbar (not just open sidepanel)</li>
-                    <li><strong>Configure API key</strong> in settings below</li>
-                    <li><strong>Click "Start Recording"</strong> to begin transcription</li>
+                    <li><strong>Configure Gemini API key</strong> in settings below</li>
+                    <li><strong>Click "Start Recording"</strong> - transcripts update every 30 seconds</li>
                 </ol>
                 <div class="instructions-note">
                     <i class="fas fa-exclamation-triangle"></i>
                     <span>Chrome system pages (chrome://) cannot be recorded</span>
                 </div>
             </div>
-        </div>
+        </div> -->
 
         <!-- Timer Display -->
         <div class="timer-container" id="timerContainer" style="display: none;">
@@ -72,6 +72,8 @@
             </button>
         </div>
 
+
+
         <!-- API Configuration -->
         <div class="config-section">
             <div class="config-header">
@@ -84,17 +86,22 @@
                 <div class="form-group">
                     <label for="apiProvider">Provider:</label>
                     <select id="apiProvider" class="form-control">
-                        <option value="gemini">Google Gemini 2.5 Flash (Recommended - Free Credits)</option>
-                        <option value="google">Google Speech-to-Text</option>
-                        <option value="openai">OpenAI Whisper</option>
-                        <option value="deepgram">Deepgram</option>
-                        <option value="fireworks">Fireworks</option>
-                        <option value="auto">Auto (Fallback)</option>
+                        <option value="google">Google Speech-to-Text (Recommended - Reliable)</option>
+                        <option value="openai">OpenAI Whisper (High Quality)</option>
+                        <option value="deepgram">Deepgram (Fast & Accurate)</option>
+                        <option value="fireworks">Fireworks (Alternative)</option>
+                        <option value="gemini">Google Gemini (Experimental)</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label for="apiKey">API Key:</label>
                     <input type="password" id="apiKey" class="form-control" placeholder="Enter your API key">
+                    <div class="api-help">
+                        <small>
+                            <strong>Google Speech-to-Text:</strong> Get free credits at <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a><br>
+                            <strong>OpenAI:</strong> Get API key at <a href="https://platform.openai.com/" target="_blank">OpenAI Platform</a>
+                        </small>
+                    </div>
                 </div>
                 <button class="btn btn-small" id="saveConfig">
                     <i class="fas fa-save"></i>
