@@ -316,12 +316,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Font Awesome for icons
 - Various transcription API providers
 
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/Real-Time-Audio-Transcript-Extension/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/Real-Time-Audio-Transcript-Extension/discussions)
-- **Email**: your-email@example.com
-
 ---
 
 **Note**: This extension requires an active internet connection and valid API keys for transcription services to function properly.
