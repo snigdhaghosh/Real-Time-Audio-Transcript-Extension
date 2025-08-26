@@ -252,18 +252,30 @@ class AudioTranscriptionManager {
         
         return result.trim();
       } else {
-        console.log('⚪ API returned empty result (likely silence)');
+        console.log('⚪ API returned empty result (likely silence or no speech detected)');
+        // Don't throw error for empty results, just return null
         return null;
       }
     } catch (error) {
       console.error(`❌ ${this.apiConfig.provider} API error:`, error);
+      
+      // Don't retry for certain types of errors
+      if (error.message.includes('Failed to get file URI') || 
+          error.message.includes('empty result') ||
+          error.message.includes('silence')) {
+        console.log('⚠️ Non-retryable error, returning null');
+        return null;
+      }
+      
       this.retryCount++;
       
       if (this.retryCount >= this.maxRetries) {
         this.retryCount = 0; // Reset for next attempt
-        throw new Error(`Transcription failed: ${error.message}`);
+        console.log('⚠️ Max retries reached, returning null instead of throwing error');
+        return null;
       }
       
+      // For retryable errors, throw to trigger retry
       throw error;
     }
   }
@@ -295,12 +307,13 @@ class AudioTranscriptionManager {
     try {
       // Try direct transcription first (no file upload required)
       const transcript = await this.callGeminiDirectAPI(audioBase64, config);
-      if (transcript) {
+      if (transcript && transcript.trim()) {
+        console.log('✅ Direct Gemini transcription successful, skipping file upload fallback');
         return transcript;
       }
       
-      // Fallback to file upload method if direct method fails
-      console.log('🔄 Falling back to file upload method...');
+      // Only fallback to file upload if direct method completely failed
+      console.log('🔄 Direct method returned empty result, trying file upload method...');
       return await this.callGeminiFileUploadAPI(audioBase64, config);
       
     } catch (error) {
@@ -318,9 +331,6 @@ class AudioTranscriptionManager {
   async callGeminiDirectAPI(audioBase64, config) {
     try {
       console.log('🎯 Attempting direct Gemini transcription...');
-      
-      // Convert audio to base64 data URL
-      const audioDataUrl = `data:audio/webm;base64,${audioBase64}`;
       
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.apiKey}`, {
         method: 'POST',
@@ -354,8 +364,14 @@ class AudioTranscriptionManager {
       
       const data = await response.json();
       const transcript = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-      console.log('✅ Direct Gemini transcription successful:', transcript);
-      return transcript;
+      
+      if (transcript) {
+        console.log('✅ Direct Gemini transcription successful:', transcript);
+        return transcript;
+      } else {
+        console.log('⚪ Direct method returned empty transcript (likely silence)');
+        return null; // Return null to trigger fallback
+      }
       
     } catch (error) {
       console.log('⚠️ Direct method error:', error.message);
@@ -364,89 +380,98 @@ class AudioTranscriptionManager {
   }
 
   async callGeminiFileUploadAPI(audioBase64, config) {
-    // Step 1: Upload audio file to Gemini File API
-    const audioBlob = this.base64ToBlob(audioBase64, 'audio/webm');
-    const formData = new FormData();
-    formData.append('file', audioBlob, 'audio.webm');
-    
-    console.log('📤 Uploading audio to Gemini File API...');
-    const uploadResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/files?key=${config.apiKey}`, {
-      method: 'POST',
-      body: formData
-    });
-    
-    if (!uploadResponse.ok) {
-      const errorText = await uploadResponse.text();
-      console.error('❌ Gemini upload error:', errorText);
-      throw new Error(`Gemini upload failed: ${uploadResponse.status}`);
-    }
-    
-    const uploadData = await uploadResponse.json();
-    console.log('📋 Gemini upload response:', uploadData);
-    
-    const fileUri = uploadData.file?.uri;
-    
-    if (!fileUri) {
-      console.error('❌ No file URI in upload response:', uploadData);
-      throw new Error('Failed to get file URI from Gemini upload. Response: ' + JSON.stringify(uploadData));
-    }
-    
-    console.log('✅ Audio uploaded to Gemini, URI:', fileUri);
-    
-    // Wait a moment for the file to be processed
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Step 2: Use Gemini 2.5 Flash to transcribe the uploaded audio
-    const transcribeResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.apiKey}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: "Please transcribe this audio file. Return only the spoken words without any additional formatting, explanations, or metadata. If there is no speech, return an empty response."
-          }, {
-            fileData: {
-              mimeType: "audio/webm",
-              fileUri: fileUri
-            }
-          }]
-        }],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 2048,
-          candidateCount: 1
-        }
-      })
-    });
-    
-    console.log('📡 Gemini transcription response status:', transcribeResponse.status);
-    
-    if (!transcribeResponse.ok) {
-      const errorText = await transcribeResponse.text();
-      console.error('❌ Gemini transcription error:', errorText);
-      throw new Error(`Gemini transcription failed: ${transcribeResponse.status}`);
-    }
-    
-    const transcribeData = await transcribeResponse.json();
-    console.log('📄 Gemini transcription response:', transcribeData);
-    
-    // Extract transcript
-    const transcript = transcribeData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-    console.log('📝 Gemini extracted transcript:', transcript);
-    
-    // Clean up the uploaded file (optional)
     try {
-      await fetch(`https://generativelanguage.googleapis.com/v1beta/${fileUri}?key=${config.apiKey}`, {
-        method: 'DELETE'
+      // Step 1: Upload audio file to Gemini File API
+      const audioBlob = this.base64ToBlob(audioBase64, 'audio/webm');
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'audio.webm');
+      
+      console.log('📤 Uploading audio to Gemini File API...');
+      const uploadResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/files?key=${config.apiKey}`, {
+        method: 'POST',
+        body: formData
       });
-      console.log('🗑️ Cleaned up uploaded file');
-    } catch (cleanupError) {
-      console.warn('⚠️ Failed to cleanup file:', cleanupError);
+      
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text();
+        console.error('❌ Gemini upload error:', errorText);
+        throw new Error(`Gemini upload failed: ${uploadResponse.status}`);
+      }
+      
+      const uploadData = await uploadResponse.json();
+      console.log('📋 Gemini upload response:', uploadData);
+      
+      const fileUri = uploadData.file?.uri;
+      
+      if (!fileUri) {
+        console.error('❌ No file URI in upload response:', uploadData);
+        // Instead of throwing an error, return empty string to indicate no transcription
+        console.log('⚠️ File upload failed, returning empty transcript');
+        return '';
+      }
+      
+      console.log('✅ Audio uploaded to Gemini, URI:', fileUri);
+      
+      // Wait a moment for the file to be processed
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Step 2: Use Gemini 2.5 Flash to transcribe the uploaded audio
+      const transcribeResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: "Please transcribe this audio file. Return only the spoken words without any additional formatting, explanations, or metadata. If there is no speech, return an empty response."
+            }, {
+              fileData: {
+                mimeType: "audio/webm",
+                fileUri: fileUri
+              }
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 2048,
+            candidateCount: 1
+        }
+        })
+      });
+      
+      console.log('📡 Gemini transcription response status:', transcribeResponse.status);
+      
+      if (!transcribeResponse.ok) {
+        const errorText = await transcribeResponse.text();
+        console.error('❌ Gemini transcription error:', errorText);
+        throw new Error(`Gemini transcription failed: ${transcribeResponse.status}`);
+      }
+      
+      const transcribeData = await transcribeResponse.json();
+      console.log('📄 Gemini transcription response:', transcribeData);
+      
+      // Extract transcript
+      const transcript = transcribeData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+      console.log('📝 Gemini extracted transcript:', transcript);
+      
+      // Clean up the uploaded file (optional)
+      try {
+        await fetch(`https://generativelanguage.googleapis.com/v1beta/${fileUri}?key=${config.apiKey}`, {
+          method: 'DELETE'
+        });
+        console.log('🗑️ Cleaned up uploaded file');
+      } catch (cleanupError) {
+        console.warn('⚠️ Failed to cleanup file:', cleanupError);
+      }
+      
+      return transcript;
+      
+    } catch (error) {
+      console.error('❌ File upload method failed:', error);
+      // Return empty string instead of throwing error to prevent cascading failures
+      return '';
     }
-    
-    return transcript;
   }
 
   async callGoogleSpeechAPI(audioBase64, config) {

@@ -843,8 +843,18 @@ class SidepanelManager {
         await this.loadTranscript();
       } else if (response && response.success && !response.transcription) {
         console.log('⚪ No transcription text returned (might be silence or API returned empty)');
+        // This is normal for silence or no speech, don't show error
+      } else if (response && response.error) {
+        // Only log errors, don't show them to user if they're expected
+        if (!response.error.includes('Failed to get file URI') && 
+            !response.error.includes('empty result') &&
+            !response.error.includes('silence')) {
+          console.log('❌ Transcription failed:', response.error);
+        } else {
+          console.log('⚪ Expected result (silence or no speech detected)');
+        }
       } else {
-        console.log('❌ Transcription failed:', response?.error || 'Unknown error');
+        console.log('⚪ No transcription result (likely silence)');
       }
     } catch (error) {
       console.error('💥 Failed to send audio chunk:', error);
