@@ -52,7 +52,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["sidepanel.html", "sidepanel.js", "sidepanel.css"],
+      "resources": ["sidepanel.html", "sidepanel.js", "sidepanel.css", "langchain-integration.js"],
       "matches": ["<all_urls>"]
     }
   ]

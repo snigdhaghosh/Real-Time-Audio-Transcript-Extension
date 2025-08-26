@@ -283,20 +283,24 @@ class SidepanelManager {
     const exportBtn = document.getElementById('exportBtn');
 
     if (this.currentTranscript.length === 0) {
-      const isRecording = this.isRecording;
-      transcriptContent.innerHTML = `
-        <div class="empty-state">
-          <i class="fas fa-microphone${isRecording ? '' : '-slash'}"></i>
-          <p>${isRecording ? 
-            'Recording in progress... Audio is being captured (tab audio may be muted during recording).' : 
-            'No transcript yet. Start recording on a webpage with audio to begin transcription.'
-          }</p>
-          ${isRecording ? 
-            '<p style="font-size: 0.9em; color: #666; margin-top: 10px;">Note: Tab audio becomes silent during recording - this is normal Chrome behavior. Transcription still works!</p>' : 
-            '<p style="font-size: 0.9em; color: #666; margin-top: 10px;">Note: Cannot record from Chrome system pages (chrome://, extensions page, etc.)</p>'
-          }
-        </div>
-      `;
+        const isRecording = this.isRecording;
+        transcriptContent.innerHTML = `
+          <div class="empty-state">
+            <i class="fas fa-microphone${isRecording ? '' : '-slash'}"></i>
+            <p>${isRecording ? 
+              'Recording in progress... Audio is being captured (tab audio may be muted during recording).' : 
+              'No transcript yet. Start recording on a webpage with audio to begin transcription.'
+            }</p>
+            ${isRecording ? 
+              '<p style="font-size: 0.9em; color: #666; margin-top: 10px;">Note: Tab audio becomes silent during recording - this is normal Chrome behavior. Transcription still works!</p>' : 
+              '<p style="font-size: 0.9em; color: #666; margin-top: 10px;">Note: Cannot record from Chrome system pages (chrome://, extensions page, etc.)</p>'
+            }
+            ${isRecording ? 
+              '<p style="font-size: 0.9em; color: #667eea; margin-top: 10px;"><strong>💡 Tip:</strong> Make sure you have configured an OpenAI API key in settings (⚙️) and the webpage has audio playing.</p>' : 
+              ''
+            }
+          </div>
+        `;
       exportBtn.disabled = true;
     } else {
       transcriptContent.innerHTML = this.currentTranscript
@@ -690,9 +694,9 @@ class SidepanelManager {
         console.error('❌ MediaRecorder error:', event.error);
       };
 
-      console.log('🚀 Starting MediaRecorder with 30-second intervals...');
-      // Start recording with 30-second chunks as per requirements
-      this.localMediaRecorder.start(30000); // 30 seconds
+      console.log('🚀 Starting MediaRecorder with 10-second intervals...');
+      // Start recording with 10-second chunks for better API compatibility
+      this.localMediaRecorder.start(10000); // 10 seconds
       console.log('🎬 MediaRecorder state after start:', this.localMediaRecorder.state);
 
       // Inform the background service worker to update its status
@@ -732,14 +736,14 @@ class SidepanelManager {
 
 
 
-  // Process audio chunk with 3-second overlap as per requirements
+  // Process audio chunk with 1-second overlap for better transcription continuity
   async processChunkWithOverlap(currentChunk) {
     try {
       let chunkToProcess = currentChunk;
       
       // If we have an overlap buffer from the previous chunk, combine it
       if (this.overlapBuffer) {
-        console.log('🔄 Combining with 3-second overlap from previous chunk...');
+        console.log('🔄 Combining with 1-second overlap from previous chunk...');
         
         // Create a combined blob with overlap + current chunk
         chunkToProcess = new Blob([this.overlapBuffer, currentChunk], { 
@@ -752,7 +756,7 @@ class SidepanelManager {
       // Send the current chunk (with overlap if applicable) for transcription
       await this.sendAudioChunk(chunkToProcess);
       
-      // Create precise 3-second overlap buffer for next chunk
+      // Create precise 1-second overlap buffer for next chunk
       await this.createOverlapBuffer(currentChunk);
       
     } catch (error) {
@@ -762,12 +766,12 @@ class SidepanelManager {
     }
   }
 
-  // Create a more precise 3-second overlap buffer
+  // Create a more precise 1-second overlap buffer
   async createOverlapBuffer(audioChunk) {
     try {
       // For WebM Opus format, we'll use a time-based approach
-      // Since we're recording 30-second chunks, 3 seconds = 10% of the chunk
-      const OVERLAP_DURATION_RATIO = 0.1; // 3 seconds out of 30 seconds
+      // Since we're recording 10-second chunks, 1 second = 10% of the chunk
+      const OVERLAP_DURATION_RATIO = 0.1; // 1 second out of 10 seconds
       
       const arrayBuffer = await audioChunk.arrayBuffer();
       const overlapSize = Math.floor(arrayBuffer.byteLength * OVERLAP_DURATION_RATIO);
@@ -781,7 +785,7 @@ class SidepanelManager {
           type: 'audio/webm;codecs=opus' 
         });
         
-        console.log('💾 Created 3-second overlap buffer:', {
+        console.log('💾 Created 1-second overlap buffer:', {
           originalSize: arrayBuffer.byteLength,
           overlapSize: overlapData.byteLength,
           ratio: (overlapData.byteLength / arrayBuffer.byteLength * 100).toFixed(1) + '%'
@@ -801,9 +805,14 @@ class SidepanelManager {
     try {
       console.log('🎵 Processing audio chunk, size:', audioBlob.size, 'bytes');
       
-      if (audioBlob.size === 0 || audioBlob.size < 1000) {
-        console.warn('⚠️ Audio chunk too small, skipping...', audioBlob.size);
+      if (audioBlob.size === 0) {
+        console.warn('⚠️ Audio chunk is empty, skipping...');
         return;
+      }
+      
+      if (audioBlob.size < 1000) {
+        console.warn('⚠️ Audio chunk too small, might be silence:', audioBlob.size, 'bytes');
+        // Still try to process it in case it's valid audio
       }
       
       // Convert blob to base64 in chunks to avoid exceeding the call stack
