@@ -186,7 +186,15 @@ class SidepanelManager {
       const hours = Math.floor(duration / 3600);
       const minutes = Math.floor((duration % 3600) / 60);
       const seconds = duration % 60;
-      timerElement.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+      
+      // Add chunk progress indicator for 30-second intervals
+      const chunkProgress = Math.floor(seconds / 30) * 30;
+      const nextChunkIn = 30 - (seconds % 30);
+      
+      timerElement.innerHTML = `
+        <span>${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}</span>
+        <small style="color: #667eea; margin-left: 8px;">Next update in ${nextChunkIn}s</small>
+      `;
     } else {
       const response = this.sendMessage({ action: 'getStatus' });
       response.then(status => {
@@ -265,17 +273,63 @@ class SidepanelManager {
   async loadTranscript() {
     try {
       const response = await this.sendMessage({ action: 'getTranscript' });
-      this.currentTranscript = response.transcript || [];
-      this.updateTranscriptDisplay();
+      const newTranscript = response.transcript || [];
+      
+      console.log(`🔍 Checking transcript: current=${this.currentTranscript.length}, new=${newTranscript.length}`);
+      
+      // Always update if we have new entries
+      if (newTranscript.length > this.currentTranscript.length) {
+        console.log(`📥 Loaded transcript: ${this.currentTranscript.length} → ${newTranscript.length} entries`);
+        this.currentTranscript = newTranscript;
+        this.updateTranscriptDisplay();
+        
+        // Force scroll to bottom if auto-scroll is enabled
+        if (this.autoScroll) {
+          setTimeout(() => this.scrollToBottom(), 100);
+        }
+        return true; // Indicate that we updated
+      } 
+      // Also update if same length but different content (in case entries were modified)
+      else if (newTranscript.length === this.currentTranscript.length && newTranscript.length > 0) {
+        // Check if content is different
+        const currentText = this.currentTranscript.map(entry => entry.text).join('');
+        const newText = newTranscript.map(entry => entry.text).join('');
+        
+        if (currentText !== newText) {
+          console.log(`📝 Transcript content changed, updating display...`);
+          this.currentTranscript = newTranscript;
+          this.updateTranscriptDisplay();
+          return true; // Indicate that we updated
+        }
+      }
+      
+      return false; // No update needed
     } catch (error) {
       console.error('Failed to load transcript:', error);
+      return false;
     }
   }
 
   // Handle new transcript entries from background script
   handleNewTranscriptEntry(entry) {
+    console.log('📥 Received new transcript entry in sidepanel:', entry.text.substring(0, 50) + '...');
+    
+    // Check if this entry already exists to avoid duplicates
+    const existingEntry = this.currentTranscript.find(existing => existing.id === entry.id);
+    if (existingEntry) {
+      console.log('⚠️ Entry already exists, skipping duplicate');
+      return;
+    }
+    
     this.currentTranscript.push(entry);
     this.updateTranscriptDisplay();
+    
+    // Force immediate update to ensure real-time display
+    if (this.autoScroll) {
+      this.scrollToBottom();
+    }
+    
+    console.log('✅ Transcript display updated with new entry');
   }
 
   updateTranscriptDisplay() {
@@ -288,7 +342,7 @@ class SidepanelManager {
           <div class="empty-state">
             <i class="fas fa-microphone${isRecording ? '' : '-slash'}"></i>
             <p>${isRecording ? 
-              'Recording in progress... Audio is being captured (tab audio may be muted during recording).' : 
+              'Recording in progress... Transcriptions update every 30 seconds with smooth streaming.' : 
               'No transcript yet. Start recording on a webpage with audio to begin transcription.'
             }</p>
             ${isRecording ? 
@@ -296,7 +350,7 @@ class SidepanelManager {
               '<p style="font-size: 0.9em; color: #666; margin-top: 10px;">Note: Cannot record from Chrome system pages (chrome://, extensions page, etc.)</p>'
             }
             ${isRecording ? 
-              '<p style="font-size: 0.9em; color: #667eea; margin-top: 10px;"><strong>💡 Tip:</strong> Make sure you have configured an OpenAI API key in settings (⚙️) and the webpage has audio playing.</p>' : 
+              '<p style="font-size: 0.9em; color: #667eea; margin-top: 10px;"><strong>💡 Tip:</strong> Transcriptions appear every 30 seconds. Make sure you have configured an API key in settings (⚙️).</p>' : 
               ''
             }
           </div>
@@ -453,7 +507,7 @@ class SidepanelManager {
   }
 
   startStatusPolling() {
-    // Poll for status updates every 2 seconds
+    // Poll for status updates every 2 seconds for better performance
     setInterval(() => {
       // Only update status from background if not recording locally
       if (!this.isRecording || !this.localSessionStartTime) {
@@ -462,7 +516,7 @@ class SidepanelManager {
         // to avoid overwriting real-time transcripts
         this.loadTranscript();
       }
-    }, 2000);
+    }, 2000); // Balanced for performance and responsiveness
   }
 
   async testApis() {
@@ -694,9 +748,9 @@ class SidepanelManager {
         console.error('❌ MediaRecorder error:', event.error);
       };
 
-      console.log('🚀 Starting MediaRecorder with 10-second intervals...');
-      // Start recording with 10-second chunks for better API compatibility
-      this.localMediaRecorder.start(10000); // 10 seconds
+      console.log('🚀 Starting MediaRecorder with 30-second intervals...');
+      // Start recording with 30-second chunks as per requirements
+      this.localMediaRecorder.start(30000); // 30 seconds
       console.log('🎬 MediaRecorder state after start:', this.localMediaRecorder.state);
 
       // Inform the background service worker to update its status
@@ -736,14 +790,14 @@ class SidepanelManager {
 
 
 
-  // Process audio chunk with 1-second overlap for better transcription continuity
+  // Process audio chunk with 3-second overlap for better transcription continuity
   async processChunkWithOverlap(currentChunk) {
     try {
       let chunkToProcess = currentChunk;
       
       // If we have an overlap buffer from the previous chunk, combine it
       if (this.overlapBuffer) {
-        console.log('🔄 Combining with 1-second overlap from previous chunk...');
+        console.log('🔄 Combining with 3-second overlap from previous chunk...');
         
         // Create a combined blob with overlap + current chunk
         chunkToProcess = new Blob([this.overlapBuffer, currentChunk], { 
@@ -756,7 +810,7 @@ class SidepanelManager {
       // Send the current chunk (with overlap if applicable) for transcription
       await this.sendAudioChunk(chunkToProcess);
       
-      // Create precise 1-second overlap buffer for next chunk
+      // Create precise 3-second overlap buffer for next chunk
       await this.createOverlapBuffer(currentChunk);
       
     } catch (error) {
@@ -766,12 +820,12 @@ class SidepanelManager {
     }
   }
 
-  // Create a more precise 1-second overlap buffer
+  // Create a more precise 3-second overlap buffer
   async createOverlapBuffer(audioChunk) {
     try {
       // For WebM Opus format, we'll use a time-based approach
-      // Since we're recording 10-second chunks, 1 second = 10% of the chunk
-      const OVERLAP_DURATION_RATIO = 0.1; // 1 second out of 10 seconds
+      // Since we're recording 30-second chunks, 3 seconds = 10% of the chunk
+      const OVERLAP_DURATION_RATIO = 0.1; // 3 seconds out of 30 seconds
       
       const arrayBuffer = await audioChunk.arrayBuffer();
       const overlapSize = Math.floor(arrayBuffer.byteLength * OVERLAP_DURATION_RATIO);
@@ -785,7 +839,7 @@ class SidepanelManager {
           type: 'audio/webm;codecs=opus' 
         });
         
-        console.log('💾 Created 1-second overlap buffer:', {
+        console.log('💾 Created 3-second overlap buffer:', {
           originalSize: arrayBuffer.byteLength,
           overlapSize: overlapData.byteLength,
           ratio: (overlapData.byteLength / arrayBuffer.byteLength * 100).toFixed(1) + '%'
@@ -837,10 +891,18 @@ class SidepanelManager {
       console.log('📥 Transcription response:', response);
 
       if (response && response.success && response.transcription && response.transcription.trim()) {
-        console.log('✅ Transcription already processed by background script');
-        // Transcript is automatically added by background script and synced
-        // We'll refresh from storage to get the latest entries
+        console.log('✅ Transcription processed by background script');
+        
+        // Force immediate refresh to get the latest transcript
         await this.loadTranscript();
+        
+        // Schedule multiple refreshes to ensure we catch the update
+        setTimeout(() => this.loadTranscript(), 500);
+        setTimeout(() => this.loadTranscript(), 1000);
+        setTimeout(() => this.loadTranscript(), 2000);
+        setTimeout(() => this.loadTranscript(), 3000);
+        
+        console.log('🔄 Scheduled multiple refreshes to catch transcript update');
       } else if (response && response.success && !response.transcription) {
         console.log('⚪ No transcription text returned (might be silence or API returned empty)');
         // This is normal for silence or no speech, don't show error
@@ -894,12 +956,53 @@ class SidepanelManager {
 document.addEventListener('DOMContentLoaded', () => {
   const manager = new SidepanelManager();
   
-  // Listen for messages from background script
+  // Single message listener for all message types
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log('📨 Sidepanel received message:', message.action);
+    
     if (message.action === 'newTranscriptEntry') {
+      console.log('📥 Received new transcript entry, updating display...');
       manager.handleNewTranscriptEntry(message.entry);
+    } else if (message.action === 'transcriptUpdated') {
+      console.log('🔄 Received transcript update notification, refreshing...');
+      manager.loadTranscript();
     }
   });
+  
+  // Set up aggressive polling during recording
+  let recordingRefreshInterval = null;
+  
+  // Monitor recording state for more frequent updates
+  const checkRecordingState = () => {
+    if (manager.isRecording) {
+      // During recording, refresh very frequently
+      if (!recordingRefreshInterval) {
+        console.log('🎯 Starting aggressive refresh during recording...');
+        recordingRefreshInterval = setInterval(() => {
+          console.log('🔄 Aggressive refresh during recording...');
+          manager.loadTranscript();
+        }, 1000); // Refresh every 1 second during recording
+      }
+    } else {
+      // Stop frequent refresh when not recording
+      if (recordingRefreshInterval) {
+        console.log('⏹️ Stopping aggressive refresh...');
+        clearInterval(recordingRefreshInterval);
+        recordingRefreshInterval = null;
+      }
+    }
+  };
+  
+  // Check recording state every 500ms
+  setInterval(checkRecordingState, 500);
+  
+  // Also set up a global refresh every 2 seconds regardless of recording state
+  setInterval(() => {
+    if (manager.isRecording) {
+      console.log('🔄 Global refresh check during recording...');
+      manager.loadTranscript();
+    }
+  }, 2000);
 });
 
 // Handle visibility change to update status when sidepanel becomes visible

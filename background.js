@@ -236,9 +236,9 @@ class AudioTranscriptionManager {
         this.retryCount = 0; // Reset retry count on success
         console.log(`✅ Transcription successful with ${this.apiConfig.provider}:`, result);
         
-        // Store transcription
+        // Store transcription with unique ID
         const entry = {
-          id: Date.now(),
+          id: Date.now() + Math.random(), // Ensure unique ID
           timestamp: new Date().toISOString(),
           text: result.trim(),
           duration: this.getSessionDuration()
@@ -247,8 +247,20 @@ class AudioTranscriptionManager {
         this.transcriptionBuffer.push(entry);
         await chrome.storage.local.set({ transcriptionBuffer: this.transcriptionBuffer });
         
-        // Notify sidepanel of new transcript
+        // Immediately notify sidepanel of new transcript
         this.notifySidepanelOfNewTranscript(entry);
+        
+        // Also broadcast to all potential listeners
+        try {
+          chrome.runtime.sendMessage({
+            action: 'newTranscriptEntry',
+            entry: entry
+          }).catch(() => {
+            // Ignore errors if no listeners
+          });
+        } catch (error) {
+          console.log('Broadcast message failed:', error.message);
+        }
         
         return result.trim();
       } else {
@@ -677,16 +689,82 @@ class AudioTranscriptionManager {
 
 
 
+  // notifySidepanelOfNewTranscript(entry) {
+  //   try {
+  //     console.log('📤 Notifying sidepanel of new transcript entry:', entry.text.substring(0, 50) + '...');
+      
+  //     // Send message to sidepanel to update transcript
+  //     chrome.runtime.sendMessage({
+  //       action: 'newTranscriptEntry',
+  //       entry: entry
+  //     }).catch(error => {
+  //       // Sidepanel might not be open, which is normal
+  //       console.log('Sidepanel not available for transcript update:', error.message);
+  //     });
+      
+  //     // Also try to send to all tabs that might have the sidepanel open
+  //     chrome.tabs.query({}, (tabs) => {
+  //       tabs.forEach(tab => {
+  //         try {
+  //           chrome.tabs.sendMessage(tab.id, {
+  //             action: 'newTranscriptEntry',
+  //             entry: entry
+  //           }).catch(() => {
+  //             // Ignore errors for tabs that don't have content script
+  //           });
+  //         } catch (error) {
+  //           // Ignore errors
+  //         }
+  //       });
+  //     });
+      
+  //   } catch (error) {
+  //     console.log('Failed to notify sidepanel:', error.message);
+  //   }
+  // }
+
   notifySidepanelOfNewTranscript(entry) {
     try {
-      // Send message to sidepanel to update transcript
-      chrome.runtime.sendMessage({
+      console.log('📤 Notifying sidepanel of new transcript entry:', entry.text.substring(0, 50) + '...');
+      
+      // Broadcast to all potential listeners immediately
+      const message = {
         action: 'newTranscriptEntry',
         entry: entry
-      }).catch(error => {
-        // Sidepanel might not be open, which is normal
-        console.log('Sidepanel not available for transcript update:', error.message);
+      };
+      
+      // Method 1: Direct runtime message
+      chrome.runtime.sendMessage(message).catch(error => {
+        console.log('Runtime message failed:', error.message);
       });
+      
+      // Method 2: Broadcast to all tabs
+      chrome.tabs.query({}, (tabs) => {
+        tabs.forEach(tab => {
+          try {
+            chrome.tabs.sendMessage(tab.id, message).catch(() => {
+              // Ignore errors for tabs that don't have content script
+            });
+          } catch (error) {
+            // Ignore errors
+          }
+        });
+      });
+      // Method 3: Force storage update and notify
+      chrome.storage.local.set({ 
+        transcriptionBuffer: this.transcriptionBuffer,
+        lastUpdate: Date.now()
+      }, () => {
+        console.log('✅ Storage updated, broadcasting update notification');
+        // Broadcast storage update notification
+        chrome.runtime.sendMessage({
+          action: 'transcriptUpdated',
+          timestamp: Date.now()
+        }).catch(() => {
+          // Ignore errors
+        });
+      });
+      
     } catch (error) {
       console.log('Failed to notify sidepanel:', error.message);
     }

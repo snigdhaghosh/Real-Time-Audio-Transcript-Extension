@@ -93,6 +93,13 @@ body {
     font-size: 16px;
     font-weight: 600;
     color: #475569;
+    flex-direction: column;
+}
+
+.timer small {
+    font-size: 12px;
+    font-weight: 400;
+    opacity: 0.8;
 }
 
 .timer i {
